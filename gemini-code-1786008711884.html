@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>貓咪大戰爭 - 貓咪塔雷射砲版</title>
+    <style>
+        * { box-sizing: border-box; user-select: none; }
+        body {
+            font-family: "Impact", "Arial Black", sans-serif;
+            text-align: center;
+            background-color: #0b0f19;
+            color: #fff;
+            margin: 0;
+            padding: 15px;
+        }
+        #game-container { position: relative; width: 800px; margin: 0 auto; }
+        canvas {
+            border: 4px solid #f59e0b;
+            border-radius: 12px;
+            box-shadow: 0 0 30px rgba(245, 158, 11, 0.3);
+            display: block;
+        }
+        .stats-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: linear-gradient(90deg, #1e1b4b, #311b92);
+            padding: 10px 20px;
+            border-radius: 10px;
+            margin-bottom: 8px;
+            font-size: 17px;
+            color: #fde047;
+            border: 2px solid #a855f7;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        }
+        .cannon-bar-container {
+            width: 100%;
+            background-color: #334155;
+            height: 12px;
+            border-radius: 6px;
+            margin-bottom: 12px;
+            overflow: hidden;
+            border: 1px solid #94a3b8;
+        }
+        #cannon-progress {
+            width: 0%;
+            height: 100%;
+            background: linear-gradient(90deg, #06b6d4, #3b82f6, #6366f1);
+            transition: width 0.1s linear;
+        }
+        #ui {
+            margin-top: 12px;
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 8px;
+        }
+        button {
+            padding: 12px 2px;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            background: linear-gradient(to bottom, #fbbf24, #d97706);
+            color: #000;
+            border: 2px solid #fff;
+            border-radius: 10px;
+            box-shadow: 0 4px 0 #78350f;
+            transition: all 0.05s;
+        }
+        button:active { transform: translateY(4px); box-shadow: 0 0 0 #78350f; }
+        button:disabled { background: #475569; color: #94a3b8; border-color: #64748b; box-shadow: none; cursor: not-allowed; opacity: 0.6; }
+        .btn-bahamut { background: linear-gradient(to bottom, #c084fc, #7e22ce); color: #fff; }
+        .btn-boss { background: linear-gradient(to bottom, #f87171, #dc2626); color: #fff; }
+        .btn-upgrade { background: linear-gradient(to bottom, #4ade80, #16a34a); color: #000; }
+        .btn-cannon { background: linear-gradient(to bottom, #38bdf8, #0284c7); color: #fff; }
+    </style>
+</head>
+<body>
+
+    <h1>🐱 貓咪大戰爭 (貓咪塔雷射砲版)</h1>
+
+    <div id="game-container">
+        <div class="stats-bar">
+            <div>🏰 玩家城: <span id="player-hp">1500</span> HP</div>
+            <div>💰 金錢: <span id="money">0</span> / <span id="max-money">1000</span> (Lv.<span id="bank-level">1</span>)</div>
+            <div>🏰 敵軍城: <span id="enemy-hp">2500</span> HP</div>
+        </div>
+
+        <div class="cannon-bar-container">
+            <div id="cannon-progress"></div>
+        </div>
+        
+        <canvas id="gameCanvas" width="800" height="320"></canvas>
+
+        <div id="ui">
+            <button id="btn-cat" onclick="spawnCat()">小貓咪<br>(50元)</button>
+            <button id="btn-tank" onclick="spawnTankCat()">坦克貓<br>(150元)</button>
+            <button id="btn-bahamut" class="btn-bahamut" onclick="spawnBahamut()">覺醒姆特 ⚡<br>(1000元)</button>
+            <button id="btn-boss" class="btn-boss" onclick="spawnBunBun()">噴噴老師 👹<br>(BOSS)</button>
+            <button id="btn-upgrade" class="btn-upgrade" onclick="upgradeBank()">升級錢包<br>(<span id="upgrade-cost">200</span>元)</button>
+            <button id="btn-cannon" class="btn-cannon" onclick="fireCannon()" disabled>貓咪砲 ⚡<br>(準備中)</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // 🖼️ 圖片載入區（請在引號內貼上你的 Base64 字串）
+        const imgBahamut = new Image();
+        imgBahamut.src = '這裡貼上姆特的Base64字串'; // 例如 'data:image/png;base64,iVBORw0KGgo...'
+
+        const imgBunBun = new Image();
+        imgBunBun.src = '這裡貼上噴噴老師的Base64字串'; // 例如 'data:image/png;base64,iVBORw0KGgo...'
+
+        // 🔊 音效系統
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        let audioCtx;
+        function initAudio() { if (!audioCtx) audioCtx = new AudioContext(); }
+        
+        function playSound(type) {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain); gain.connect(audioCtx.destination);
+
+            if (type === 'spawn') {
+                osc.type = 'sine'; osc.frequency.setValueAtTime(400, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(800, audioCtx.currentTime + 0.1);
+                gain.gain.setValueAtTime(0.3, audioCtx.currentTime); gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.1);
+                osc.start(); osc.stop(audioCtx.currentTime + 0.1);
+            } else if (type === 'hit') {
+                osc.type = 'square'; osc.frequency.setValueAtTime(150, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(40, audioCtx.currentTime + 0.08);
+                gain.gain.setValueAtTime(0.2, audioCtx.currentTime); gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.08);
+                osc.start(); osc.stop(audioCtx.currentTime + 0.08);
+            } else if (type === 'kb') {
+                osc.type = 'triangle'; osc.frequency.setValueAtTime(300, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(80, audioCtx.currentTime + 0.2);
+                gain.gain.setValueAtTime(0.4, audioCtx.currentTime); gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.2);
+                osc.start(); osc.stop(audioCtx.currentTime + 0.2);
+            } else if (type === 'laser') {
+                osc.type = 'sawtooth'; osc.frequency.setValueAtTime(800, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.5);
+                gain.gain.setValueAtTime(0.5, audioCtx.currentTime); gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.5);
+                osc.start(); osc.stop(audioCtx.currentTime + 0.5);
+            }
+        }
+
+        // 🎮 遊戲核心數據
+        let money = 0; let maxMoney = 1000; let moneyRate = 200 / 60;
+        let bankLevel = 1; let bankUpgradeCost = 200;
+        let playerHp = 1500; let enemyHp = 2500;
+        let units = []; let particles = []; let floatingTexts = []; let shakeTime = 0;
+
+        let cannonCharge = 0;
+        const maxCannonCharge = 600;
+        let laserAnimFrame = 0;
+
+        // 🎨 角色描繪器
+        const Drawers = {
+            normal_cat: (ctx, bounce, flash) => {
+                ctx.fillStyle = flash ? '#ff4d4d' : '#FFF'; ctx.strokeStyle = '#000'; ctx.lineWidth = 3;
+                ctx.beginPath(); ctx.arc(0, -20 + bounce, 18, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(-12, -32 + bounce); ctx.lineTo(-6, -42 + bounce); ctx.lineTo(-2, -35 + bounce); ctx.fill(); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(12, -32 + bounce); ctx.lineTo(6, -42 + bounce); ctx.lineTo(2, -35 + bounce); ctx.fill(); ctx.stroke();
+                ctx.fillStyle = '#000';
+                ctx.beginPath(); ctx.arc(-5, -22 + bounce, 2.5, 0, Math.PI * 2); ctx.arc(5, -22 + bounce, 2.5, 0, Math.PI * 2); ctx.fill();
+            },
+            tank_cat: (ctx, bounce, flash) => {
+                ctx.fillStyle = flash ? '#ff4d4d' : '#E0E0E0'; ctx.strokeStyle = '#000'; ctx.lineWidth = 3;
+                ctx.fillRect(-15, -60 + bounce, 30, 60); ctx.strokeRect(-15, -60 + bounce, 30, 60);
+                ctx.fillStyle = '#000';
+                ctx.beginPath(); ctx.arc(-5, -45 + bounce, 2.5, 0, Math.PI * 2); ctx.arc(5, -45 + bounce, 2.5, 0, Math.PI * 2); ctx.fill();
+            },
+            dog: (ctx, bounce, flash) => {
+                ctx.fillStyle = flash ? '#ff4d4d' : '#f59e0b'; ctx.strokeStyle = '#000'; ctx.lineWidth = 3;
+                ctx.beginPath(); ctx.arc(0, -18 + bounce, 16, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+                ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(-4, -20 + bounce, 2, 0, Math.PI * 2); ctx.arc(4, -20 + bounce, 2, 0, Math.PI * 2); ctx.fill();
+            },
+            bahamut: (ctx, bounce, flash) => {
+                if (imgBahamut.complete && imgBahamut.naturalWidth !== 0) {
+                    ctx.drawImage(imgBahamut, -60, -110 + bounce, 120, 110);
+                } else {
+                    ctx.fillStyle = '#a855f7'; ctx.fillRect(-20, -60 + bounce, 40, 60);
+                }
+            },
+            bunbun: (ctx, bounce, flash) => {
+                if (imgBunBun.complete && imgBunBun.naturalWidth !== 0) {
+                    ctx.save();
+                    ctx.scale(-1, 1); // 噴噴老師鏡像朝左
+                    ctx.drawImage(imgBunBun, -60, -110 + bounce, 120, 110);
+                    ctx.restore();
+                } else {
+                    ctx.fillStyle = '#ef4444'; ctx.fillRect(-30, -80 + bounce, 60, 80);
+                }
+            }
+        };
+
+        setInterval(gameLoop, 1000 / 60);
+        setInterval(spawnEnemy, 3000);
+
+        function gameLoop() {
+            if (money < maxMoney) money = Math.min(maxMoney, money + moneyRate);
+            if (cannonCharge < maxCannonCharge) cannonCharge++;
+
+            document.getElementById('money').innerText = Math.floor(money);
+            document.getElementById('player-hp').innerText = Math.max(0, Math.ceil(playerHp));
+            document.getElementById('enemy-hp').innerText = Math.max(0, Math.ceil(enemyHp));
+
+            let cannonPercent = (cannonCharge / maxCannonCharge) * 100;
+            document.getElementById('cannon-progress').style.width = cannonPercent + '%';
+
+            let cannonBtn = document.getElementById('btn-cannon');
+            if (cannonCharge >= maxCannonCharge) {
+                cannonBtn.disabled = false;
+                cannonBtn.innerHTML = "貓咪砲 ⚡<br>(可發射)";
+            } else {
+                cannonBtn.disabled = true;
+                cannonBtn.innerHTML = `貓咪砲 ⚡<br>(${Math.floor(cannonPercent)}%)`;
+            }
+
+            document.getElementById('btn-cat').disabled = money < 50;
+            document.getElementById('btn-tank').disabled = money < 150;
+            document.getElementById('btn-bahamut').disabled = money < 1000;
+            document.getElementById('btn-upgrade').disabled = money < bankUpgradeCost;
+
+            ctx.save();
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            if (shakeTime > 0) {
+                shakeTime--;
+                ctx.translate((Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8);
+            }
+
+            let skyGrad = ctx.createLinearGradient(0, 0, 0, 240);
+            skyGrad.addColorStop(0, '#0f172a'); skyGrad.addColorStop(1, '#1e293b');
+            ctx.fillStyle = skyGrad; ctx.fillRect(0, 0, 800, 240);
+
+            let groundGrad = ctx.createLinearGradient(0, 240, 0, 320);
+            groundGrad.addColorStop(0, '#15803d'); groundGrad.addColorStop(1, '#166534');
+            ctx.fillStyle = groundGrad; ctx.fillRect(0, 240, 800, 80);
+            ctx.fillStyle = '#22c55e'; ctx.fillRect(0, 240, 800, 6);
+
+            drawCastle(20, 100, '#2563eb', '貓咪塔');
+            drawCastle(700, 100, '#dc2626', '敵軍城堡');
+
+            if (laserAnimFrame > 0) {
+                laserAnimFrame--;
+                let laserAlpha = laserAnimFrame / 20;
+
+                ctx.save();
+                ctx.strokeStyle = `rgba(168, 85, 247, ${laserAlpha})`;
+                ctx.lineWidth = 30 + Math.sin(laserAnimFrame) * 10;
+                ctx.beginPath(); ctx.moveTo(90, 160); ctx.lineTo(700, 160); ctx.stroke();
+
+                ctx.strokeStyle = `rgba(224, 242, 254, ${laserAlpha})`;
+                ctx.lineWidth = 12;
+                ctx.beginPath(); ctx.moveTo(90, 160); ctx.lineTo(700, 160); ctx.stroke();
+                ctx.restore();
+            }
+
+            for (let i = units.length - 1; i >= 0; i--) {
+                let u = units[i];
+
+                if (u.kbFrame > 0) {
+                    u.kbFrame--;
+                    u.x += (u.team === 'cat' ? -3.5 : 3.5);
+                    u.x = Math.max(90, Math.min(710, u.x));
+                    drawUnit(u);
+                    continue;
+                }
+
+                let canMove = true;
+                if (u.attackCooldown > 0) u.attackCooldown--;
+                if (u.flashTime > 0) u.flashTime--;
+
+                for (let j = 0; j < units.length; j++) {
+                    let other = units[j];
+                    if (u.team !== other.team) {
+                        if (Math.abs(u.x - other.x) < 45) {
+                            canMove = false;
+                            if (u.attackCooldown === 0) {
+                                u.attackFrame = 12;
+                                u.attackCooldown = u.type === 'bahamut' ? 22 : (u.type === 'bunbun' ? 18 : 35);
+                                applyDamage(other, u.atk, u.team);
+                            }
+                        }
+                    }
+                }
+
+                if (u.team === 'cat' && u.x >= 700) {
+                    canMove = false;
+                    if (u.attackCooldown === 0) {
+                        u.attackFrame = 12; u.attackCooldown = 22;
+                        enemyHp -= u.atk; createParticles(700, 200, '#fde047');
+                        createFloatingText(700, 160, `-${u.atk}`, '#fde047');
+                        playSound('hit');
+                    }
+                } else if (u.team === 'dog' && u.x <= 100) {
+                    canMove = false;
+                    if (u.attackCooldown === 0) {
+                        u.attackFrame = 12; u.attackCooldown = 35;
+                        playerHp -= u.atk; createParticles(100, 200, '#ef4444');
+                        createFloatingText(100, 160, `-${u.atk}`, '#ef4444');
+                        playSound('hit');
+                    }
+                }
+
+                if (u.hp <= 0) { units.splice(i, 1); continue; }
+                if (canMove) { u.x += u.speed; u.animStep += 0.35; }
+
+                drawUnit(u);
+            }
+
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i]; p.x += p.vx; p.y += p.vy; p.life--;
+                ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill();
+                if (p.life <= 0) particles.splice(i, 1);
+            }
+
+            for (let i = floatingTexts.length - 1; i >= 0; i--) {
+                let t = floatingTexts[i]; t.y -= 1; t.life--;
+                ctx.fillStyle = t.color; ctx.font = 'bold 18px Impact'; ctx.fillText(t.text, t.x, t.y);
+                if (t.life <= 0) floatingTexts.splice(i, 1);
+            }
+
+            ctx.restore();
+
+            if (enemyHp <= 0) { alert('🎉 攻陷敵軍城堡，贏得大勝！'); location.reload(); }
+            else if (playerHp <= 0) { alert('💥 貓咪塔被攻陷，遊戲結束！'); location.reload(); }
+        }
+
+        function fireCannon() {
+            initAudio();
+            if (cannonCharge >= maxCannonCharge) {
+                cannonCharge = 0;
+                laserAnimFrame = 20;
+                shakeTime = 12;
+                playSound('laser');
+
+                for (let u of units) {
+                    if (u.team === 'dog') {
+                        u.hp -= 150;
+                        u.flashTime = 10;
+                        u.kbFrame = 18;
+                        createParticles(u.x, 200, '#38bdf8');
+                        createFloatingText(u.x, 150, 'CANNON KB!', '#38bdf8');
+                    }
+                }
+            }
+        }
+
+        function applyDamage(target, damage, attackerTeam) {
+            target.hp -= damage;
+            target.flashTime = 6;
+            
+            createParticles(target.x, 210, attackerTeam === 'cat' ? '#a855f7' : '#fde047');
+            createFloatingText(target.x, 180, `-${damage}`, attackerTeam === 'cat' ? '#fde047' : '#ef4444');
+
+            let hpPerKb = target.maxHp / target.maxKb;
+            let currentKbStage = Math.floor((target.maxHp - target.hp) / hpPerKb);
+
+            if (currentKbStage > target.kbCount && target.hp > 0) {
+                target.kbCount = currentKbStage;
+                target.kbFrame = 16;
+                target.attackCooldown = 0;
+                createFloatingText(target.x, 150, 'KB!', '#ffffff');
+                playSound('kb');
+            }
+        }
+
+        function drawCastle(x, y, color, label) {
+            ctx.fillStyle = color; ctx.fillRect(x, y, 80, 140);
+            ctx.strokeStyle = '#000'; ctx.lineWidth = 4; ctx.strokeRect(x, y, 80, 140);
+
+            if (label === '貓咪塔') {
+                ctx.fillStyle = '#0284c7'; ctx.fillRect(x + 60, y + 50, 30, 20);
+                ctx.strokeRect(x + 60, y + 50, 30, 20);
+            }
+
+            ctx.fillStyle = '#FFF'; ctx.font = 'bold 14px sans-serif'; ctx.fillText(label, x + 10, y + 70);
+        }
+
+        function drawUnit(u) {
+            ctx.save();
+            ctx.translate(u.x, 240);
+
+            let attackRotate = 0;
+            let bounce = -Math.abs(Math.sin(u.animStep)) * 8;
+
+            if (u.kbFrame > 0) {
+                attackRotate = u.team === 'cat' ? -0.6 : 0.6;
+                bounce = -20;
+            } else if (u.attackFrame > 0) {
+                attackRotate = u.team === 'cat' ? 0.45 : -0.45;
+            }
+
+            ctx.rotate(attackRotate);
+            if (Drawers[u.type]) Drawers[u.type](ctx, bounce, u.flashTime > 0 || u.kbFrame > 0);
+            ctx.restore();
+        }
+
+        function createParticles(x, y, color) {
+            for (let i = 0; i < 10; i++) {
+                particles.push({
+                    x: x, y: y,
+                    vx: (Math.random() - 0.5) * 8, vy: (Math.random() - 0.5) * 8,
+                    life: 15, size: Math.random() * 4 + 2, color: color
+                });
+            }
+        }
+
+        function createFloatingText(x, y, text, color) {
+            floatingTexts.push({ x: x, y: y, text: text, color: color, life: 25 });
+        }
+
+        function upgradeBank() {
+            initAudio();
+            if (money >= bankUpgradeCost) {
+                money -= bankUpgradeCost; bankLevel++; maxMoney += 500; moneyRate += 1.5;
+                bankUpgradeCost = Math.floor(bankUpgradeCost * 1.5);
+                document.getElementById('bank-level').innerText = bankLevel;
+                document.getElementById('max-money').innerText = maxMoney;
+                document.getElementById('upgrade-cost').innerText = bankUpgradeCost;
+                playSound('spawn');
+            }
+        }
+
+        function spawnCat() {
+            initAudio();
+            if (money >= 50) {
+                money -= 50;
+                units.push({ type: 'normal_cat', team: 'cat', x: 100, speed: 1.5, atk: 25, hp: 80, maxHp: 80, maxKb: 3, kbCount: 0, kbFrame: 0, animStep: 0, attackCooldown: 0, attackFrame: 0, flashTime: 0 });
+                playSound('spawn');
+            }
+        }
+
+        function spawnTankCat() {
+            initAudio();
+            if (money >= 150) {
+                money -= 150;
+                units.push({ type: 'tank_cat', team: 'cat', x: 100, speed: 0.8, atk: 10, hp: 350, maxHp: 350, maxKb: 1, kbCount: 0, kbFrame: 0, animStep: 0, attackCooldown: 0, attackFrame: 0, flashTime: 0 });
+                playSound('spawn');
+            }
+        }
+
+        function spawnBahamut() {
+            initAudio();
+            if (money >= 1000) {
+                money -= 1000;
+                units.push({ type: 'bahamut', team: 'cat', x: 100, speed: 6.0, atk: 450, hp: 1500, maxHp: 1500, maxKb: 4, kbCount: 0, kbFrame: 0, animStep: 0, attackCooldown: 0, attackFrame: 0, flashTime: 0 });
+                playSound('spawn');
+            }
+        }
+
+        function spawnBunBun() {
+            initAudio();
+            units.push({ type: 'bunbun', team: 'dog', x: 700, speed: -1.8, atk: 90, hp: 2500, maxHp: 2500, maxKb: 10, kbCount: 0, kbFrame: 0, animStep: 0, attackCooldown: 0, attackFrame: 0, flashTime: 0 });
+        }
+
+        function spawnEnemy() {
+            units.push({ type: 'dog', team: 'dog', x: 700, speed: -1.2, atk: 20, hp: 100, maxHp: 100, maxKb: 3, kbCount: 0, kbFrame: 0, animStep: 0, attackCooldown: 0, attackFrame: 0, flashTime: 0 });
+        }
+    </script>
+</body>
+</html>
